@@ -29,7 +29,11 @@ func TestHomomorphicAdditionDebug(t *testing.T) {
 	a, _ := new(big.Int).SetString(aStr, 10)
 	h := Mod1(new(big.Float).SetPrec(prec).Mul(new(big.Float).SetInt(a), x), prec)
 
-	pk := &PublicKey{X: x, H: h, Prec: prec}
+	// Compute integer representations for exact arithmetic
+	xInt, _ := intFromFloat(x, prec)
+	hInt, _ := intFromFloat(h, prec)
+
+	pk := &PublicKey{XInt: xInt, HInt: hInt, Prec: prec}
 	sk := &PrivateKey{A: a, PK: *pk}
 
 	// --- two tiny votes ---------------------------------------------------
@@ -44,17 +48,15 @@ func TestHomomorphicAdditionDebug(t *testing.T) {
 	//----------------------------------------------------------------------
 	//  Hand‑compute every intermediate number for ciphertext‑1
 	//----------------------------------------------------------------------
-	n := len(ct1.C2)
+	n := ct1.GetDigitCount()
 	pow10n := pow10(n)
 	twoPow := new(big.Int).Lsh(big.NewInt(1), prec)
 
-	xInt, _ := intFromFloat(pk.X, prec)
-	hInt, _ := intFromFloat(pk.H, prec)
-
-	c1Int1 := new(big.Int).Mul(r1, xInt)
+	// Use the precomputed integer values for verification
+	c1Int1 := new(big.Int).Mul(r1, pk.XInt)
 	c1Int1.Mod(c1Int1, twoPow)
 
-	Rint1 := new(big.Int).Mul(r1, hInt)
+	Rint1 := new(big.Int).Mul(r1, pk.HInt)
 	Rint1.Mod(Rint1, twoPow)
 	Rn1 := new(big.Int).Mul(Rint1, pow10n)
 	Rn1.Div(Rn1, twoPow)
@@ -62,10 +64,10 @@ func TestHomomorphicAdditionDebug(t *testing.T) {
 	//----------------------------------------------------------------------
 	//  Same for ciphertext‑2
 	//----------------------------------------------------------------------
-	c1Int2 := new(big.Int).Mul(r2, xInt)
+	c1Int2 := new(big.Int).Mul(r2, pk.XInt)
 	c1Int2.Mod(c1Int2, twoPow)
 
-	Rint2 := new(big.Int).Mul(r2, hInt)
+	Rint2 := new(big.Int).Mul(r2, pk.HInt)
 	Rint2.Mod(Rint2, twoPow)
 	Rn2 := new(big.Int).Mul(Rint2, pow10n)
 	Rn2.Div(Rn2, twoPow)
@@ -89,8 +91,8 @@ func TestHomomorphicAdditionDebug(t *testing.T) {
 	RnSum := new(big.Int).Mul(RintSum, pow10n)
 	RnSum.Div(RnSum, twoPow)
 
-	C2_1_int := INT(ct1.C2)
-	C2_2_int := INT(ct2.C2)
+	C2_1_int := INT(ct1.C2())
+	C2_2_int := INT(ct2.C2())
 
 	//----------------------------------------------------------------------
 	//  PRINT EVERYTHING
@@ -100,25 +102,28 @@ func TestHomomorphicAdditionDebug(t *testing.T) {
 	fmt.Printf("10^n                      : %s\n", pow10n)
 	fmt.Printf("-------------- Cipher 1 --------------\n")
 	fmt.Printf("r1                        : %s\n", r1)
-	fmt.Printf("C1_1 int                  : %s\n", c1Int1)
+	fmt.Printf("C1_1 int                  : %s\n", ct1.GetC1Int())
+	fmt.Printf("C1_1 int (calc)           : %s\n", c1Int1)
 	fmt.Printf("Rint1                     : %s\n", Rint1)
 	fmt.Printf("Rn1                       : %s\n", Rn1)
 	fmt.Printf("M1                        : %s (digits %s)\n", asciiToDigits(msg1), asciiToDigits(msg1))
-	fmt.Printf("C2_1                      : %s\n", ct1.C2)
+	fmt.Printf("C2_1                      : %s\n", ct1.C2())
 
 	fmt.Printf("-------------- Cipher 2 --------------\n")
 	fmt.Printf("r2                        : %s\n", r2)
-	fmt.Printf("C1_2 int                  : %s\n", c1Int2)
+	fmt.Printf("C1_2 int                  : %s\n", ct2.GetC1Int())
+	fmt.Printf("C1_2 int (calc)           : %s\n", c1Int2)
 	fmt.Printf("Rint2                     : %s\n", Rint2)
 	fmt.Printf("Rn2                       : %s\n", Rn2)
 	fmt.Printf("M2                        : %s (digits %s)\n", asciiToDigits(msg2), asciiToDigits(msg2))
-	fmt.Printf("C2_2                      : %s\n", ct2.C2)
+	fmt.Printf("C2_2                      : %s\n", ct2.C2())
 
 	fmt.Printf("-------------- Sum -------------------\n")
+	fmt.Printf("C1_sum int (lib)          : %s\n", ctSum.GetC1Int())
 	fmt.Printf("C1_sum int (calc)         : %s\n", c1IntSum)
 	fmt.Printf("RintSum                   : %s\n", RintSum)
 	fmt.Printf("RnSum                     : %s\n", RnSum)
-	fmt.Printf("C2_sum (lib)              : %s\n", ctSum.C2)
+	fmt.Printf("C2_sum (lib)              : %s\n", ctSum.C2())
 	fmt.Printf("C2_sum int (indep)        : (C2_1+C2_2) mod 10^n = %s\n", new(big.Int).Mod(new(big.Int).Add(C2_1_int, C2_2_int), pow10n))
 	fmt.Printf("Decrypted sum (library)   : %d %q\n", sumPlain[0], sumPlain)
 	fmt.Println("======================================")
@@ -139,7 +144,11 @@ func TestHomomorphicMultipleAdditions(t *testing.T) {
 	a, _ := new(big.Int).SetString(aStr, 10)
 	h := Mod1(new(big.Float).SetPrec(prec).Mul(new(big.Float).SetInt(a), x), prec)
 
-	pk := &PublicKey{X: x, H: h, Prec: prec}
+	// Compute integer representations for exact arithmetic
+	xInt, _ := intFromFloat(x, prec)
+	hInt, _ := intFromFloat(h, prec)
+
+	pk := &PublicKey{XInt: xInt, HInt: hInt, Prec: prec}
 	sk := &PrivateKey{A: a, PK: *pk}
 
 	// Generate random numbers between 0 and 64
@@ -212,7 +221,7 @@ func TestHomomorphicMultipleAdditions(t *testing.T) {
 
 func TestHomomorphicVoting(t *testing.T) {
 	const (
-		nVotes    = 100_00
+		nVotes    = 1000
 		maxChoice = 64
 	)
 
@@ -224,12 +233,12 @@ func TestHomomorphicVoting(t *testing.T) {
 	}
 
 	// -------- simulate ballots -------------------------------------------
-	mrand.Seed(time.Now().UnixNano())
+	rng := mrand.New(mrand.NewSource(time.Now().UnixNano()))
 	var expected uint64
 	var tally *Ciphertext
 
 	for i := 0; i < nVotes; i++ {
-		vote := uint64(mrand.Intn(maxChoice + 1))
+		vote := uint64(rng.Intn(maxChoice + 1))
 		expected += vote
 
 		ct, _, err := EncryptVote(pk, vote, big.NewInt(int64(i+1))) // cheap deterministic r
@@ -254,5 +263,61 @@ func TestHomomorphicVoting(t *testing.T) {
 
 	if got != expected {
 		t.Fatalf("tally mismatch: got %d, want %d", got, expected)
+	}
+}
+
+func TestHomomorphicVoting100k(t *testing.T) {
+	const (
+		nVotes    = 100_000
+		maxChoice = 64
+	)
+
+	// -------- key pair ----------------------------------------------------
+	xStr := "0.60943791243410037460075933322619"
+	sk, pk, err := KeyGen(256, xStr)
+	if err != nil {
+		t.Fatalf("KeyGen: %v", err)
+	}
+
+	// -------- simulate ballots with fixed seed for reproducibility -------
+	rng := mrand.New(mrand.NewSource(12345)) // Fixed seed to reproduce the issue
+	var expected uint64
+	var tally *Ciphertext
+
+	t.Logf("Testing %d votes with fixed seed for reproducibility", nVotes)
+
+	for i := 0; i < nVotes; i++ {
+		vote := uint64(rng.Intn(maxChoice + 1))
+		expected += vote
+
+		ct, _, err := EncryptVote(pk, vote, big.NewInt(int64(i+1))) // cheap deterministic r
+		if err != nil {
+			t.Fatalf("EncryptVote: %v", err)
+		}
+		if tally == nil {
+			tally = ct
+		} else {
+			tally, err = tally.Add(ct, pk.Prec)
+			if err != nil {
+				t.Fatalf("Add: %v", err)
+			}
+		}
+
+		// Log progress every 10k votes
+		if (i+1)%10000 == 0 {
+			t.Logf("Processed %d votes, expected sum so far: %d", i+1, expected)
+		}
+	}
+
+	// -------- decrypt aggregate ------------------------------------------
+	got, err := DecryptVote(sk, tally)
+	if err != nil {
+		t.Fatalf("DecryptVote: %v", err)
+	}
+
+	t.Logf("Final tally: got %d, expected %d, difference: %d", got, expected, int64(got)-int64(expected))
+
+	if got != expected {
+		t.Fatalf("tally mismatch: got %d, want %d (difference: %d)", got, expected, int64(got)-int64(expected))
 	}
 }

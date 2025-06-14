@@ -3,8 +3,8 @@
 // Modulo‑1 Factoring Problem (M1FP), believed NP‑hard and
 // resistant to quantum attacks.
 //
-// All high‑precision arithmetic uses math/big.Float; the caller
-// chooses the working precision when generating keys.
+// All arithmetic uses exact integer operations for precision and
+// performance. The caller chooses the working precision when generating keys.
 package m1fp
 
 import (
@@ -13,13 +13,6 @@ import (
 	"math/big"
 	"strings"
 )
-
-// PublicKey = {x, h}.  All *big.Float values carry the same precision.
-type PublicKey struct {
-	X    *big.Float // an irrational number modulo‑1, supplied by key owner
-	H    *big.Float // h = a·x  (mod 1)
-	Prec uint       // working precision in bits
-}
 
 // PrivateKey = {a, pk}.  The secret integer a is never exposed.
 type PrivateKey struct {
@@ -57,16 +50,55 @@ func KeyGen(precBits uint, xString string) (*PrivateKey, *PublicKey, error) {
 	// h = (a * x) mod 1
 	h := mulIntFloatMod1(a, x, precBits)
 
-	pk := &PublicKey{X: x, H: h, Prec: precBits}
+	// Compute integer representations for exact arithmetic
+	xInt, err := intFromFloat(x, precBits)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to convert x to integer: %v", err)
+	}
+	hInt, err := intFromFloat(h, precBits)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to convert h to integer: %v", err)
+	}
+
+	pk := &PublicKey{XInt: xInt, HInt: hInt, Prec: precBits}
 	sk := &PrivateKey{A: a, PK: *pk}
 	return sk, pk, nil
 }
 
-// Ciphertext (C1, C2).  C1 is the fractional big.Float; C2 is the string
-// of decimal digits produced by ⊕.
+// Ciphertext (C1, C2).  Both components stored as integers for exact arithmetic.
 type Ciphertext struct {
-	C1 *big.Float // r·x  (mod 1)
-	C2 string     // decimal digits after modular‑10 addition
+	c1Int *big.Int // C1: r·xInt mod 2^Prec (exact integer)
+	c2Int *big.Int // C2: masked message as integer
+	n     int      // number of decimal digits for C2 modulus (10^n)
+}
+
+// GetC1Int returns the internal integer representation of C1.
+func (ct *Ciphertext) GetC1Int() *big.Int {
+	if ct.c1Int == nil {
+		return big.NewInt(0)
+	}
+	return new(big.Int).Set(ct.c1Int)
+}
+
+// GetC2Int returns the internal integer representation of C2.
+func (ct *Ciphertext) GetC2Int() *big.Int {
+	if ct.c2Int == nil {
+		return big.NewInt(0)
+	}
+	return new(big.Int).Set(ct.c2Int)
+}
+
+// C2 returns the C2 component as a zero-padded decimal string for compatibility.
+func (ct *Ciphertext) C2() string {
+	if ct.c2Int == nil {
+		return strings.Repeat("0", ct.n)
+	}
+	return fmt.Sprintf("%0*d", ct.n, ct.c2Int)
+}
+
+// GetDigitCount returns the number of decimal digits in C2.
+func (ct *Ciphertext) GetDigitCount() int {
+	return ct.n
 }
 
 // Encrypt encodes message m (ASCII or UTF‑8 runes within 0‑255) under pk.
@@ -99,17 +131,15 @@ func EncryptDeterministic(pk *PublicKey, m string, r *big.Int) (*Ciphertext, err
 
 	twoPow := new(big.Int).Lsh(big.NewInt(1), prec) // 2^prec
 
-	// ---- fixed‑point representations of x and h -------------------------
-	xInt, _ := intFromFloat(pk.X, prec)
-	hInt, _ := intFromFloat(pk.H, prec)
+	// ---- Use precomputed integer representations for exact arithmetic ----
+	// No float conversions needed - use stored integer values directly
 
 	// ---- C1 = r·x  mod 1 -----------------------------------------------
-	c1Int := new(big.Int).Mul(r, xInt)
+	c1Int := new(big.Int).Mul(r, pk.XInt)
 	c1Int.Mod(c1Int, twoPow)
-	c1 := floatFromInt(c1Int, prec)
 
 	// ---- R  = r·h  mod 1 -----------------------------------------------
-	Rint := new(big.Int).Mul(r, hInt)
+	Rint := new(big.Int).Mul(r, pk.HInt)
 	Rint.Mod(Rint, twoPow)
 
 	// first n decimal digits  Rn = ⌊ R * 10^n ⌋
@@ -118,33 +148,31 @@ func EncryptDeterministic(pk *PublicKey, m string, r *big.Int) (*Ciphertext, err
 
 	// ---- mask the message ----------------------------------------------
 	Mint, _ := new(big.Int).SetString(asciiToDigits(m), 10)
-	C2int := new(big.Int).Add(Mint, Rn)
-	C2int.Mod(C2int, pow10(n))
+	c2Int := new(big.Int).Add(Mint, Rn)
+	c2Int.Mod(c2Int, pow10(n))
 
-	C2 := fmt.Sprintf("%0*d", n, C2int.Int64()) // zero‑pad
-	return &Ciphertext{C1: c1, C2: C2}, nil
+	return &Ciphertext{c1Int: c1Int, c2Int: c2Int, n: n}, nil
 }
 
 // Decrypt recovers the plaintext using the same fixed‑point path.
 func Decrypt(sk *PrivateKey, ct *Ciphertext) (string, error) {
 	prec := sk.PK.Prec
-	n := len(ct.C2)
+	n := ct.n
 	twoPow := new(big.Int).Lsh(big.NewInt(1), prec)
 
-	// R' = a·C1  mod 1   (fixed‑point)
-	c1Int, _ := intFromFloat(ct.C1, prec)
-	Rint := new(big.Int).Mul(sk.A, c1Int)
+	// R' = a·C1  mod 1   (fixed‑point) - use internal integer directly
+	Rint := new(big.Int).Mul(sk.A, ct.c1Int)
 	Rint.Mod(Rint, twoPow)
 
 	Rn := new(big.Int).Mul(Rint, pow10(n))
 	Rn.Div(Rn, twoPow)
 
-	C2int, _ := new(big.Int).SetString(ct.C2, 10)
-	Mint := new(big.Int).Sub(C2int, Rn)
+	// Use C2 integer directly - no string conversion needed
+	Mint := new(big.Int).Sub(ct.c2Int, Rn)
 	if Mint.Sign() < 0 {
 		Mint.Add(Mint, pow10(n))
 	}
-	msgDigits := fmt.Sprintf("%0*d", n, Mint.Int64())
+	msgDigits := fmt.Sprintf("%0*d", n, Mint)
 	return digitsToASCII(msgDigits)
 }
 

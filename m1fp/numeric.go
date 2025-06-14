@@ -60,15 +60,14 @@ func encryptDigits(pk *PublicKey, msgDigits string, r *big.Int) (*Ciphertext, *b
 	mod10n := pow10(n)
 
 	// ---- step 1 : C1 -----------------------------------------------------
-	xInt, _ := intFromFloat(pk.X, prec)
-	c1Int := new(big.Int).Mul(r, xInt)
+	// Use precomputed integer representation for exact arithmetic
+	c1Int := new(big.Int).Mul(r, pk.XInt)
 	mod2 := new(big.Int).Lsh(big.NewInt(1), prec)
 	c1Int.Mod(c1Int, mod2)
-	c1 := floatFromInt(c1Int, prec)
 
 	// ---- step 2 : shared secret  r·h mod 1 ------------------------------
-	hInt, _ := intFromFloat(pk.H, prec)
-	Rint := new(big.Int).Mul(r, hInt)
+	// Use precomputed integer representation for exact arithmetic
+	Rint := new(big.Int).Mul(r, pk.HInt)
 	Rint.Mod(Rint, mod2)
 	Rn := new(big.Int).Mul(Rint, mod10n)
 	Rn.Div(Rn, mod2)
@@ -78,28 +77,26 @@ func encryptDigits(pk *PublicKey, msgDigits string, r *big.Int) (*Ciphertext, *b
 	C2 := new(big.Int).Add(Mint, Rn)
 	C2.Mod(C2, mod10n)
 
-	C2Str := fmt.Sprintf("%0*d", n, C2)
-	return &Ciphertext{C1: c1, C2: C2Str}, r, nil
+	return &Ciphertext{c1Int: c1Int, c2Int: C2, n: n}, r, nil
 }
 
 // DecryptDigits returns the raw decimal string embedded in the
 // ciphertext.  It is the inverse of encryptDigits.
 func DecryptDigits(sk *PrivateKey, ct *Ciphertext) (string, error) {
-	n := len(ct.C2)
+	n := ct.n
 	prec := sk.PK.Prec
 	mod10n := pow10(n)
 
-	// R' = a·C1  mod 1
-	c1Int, _ := intFromFloat(ct.C1, prec)
+	// R' = a·C1  mod 1 - use internal integer directly
 	mod2 := new(big.Int).Lsh(big.NewInt(1), prec)
-	Rint := new(big.Int).Mul(sk.A, c1Int)
+	Rint := new(big.Int).Mul(sk.A, ct.c1Int)
 	Rint.Mod(Rint, mod2)
 
 	Rn := new(big.Int).Mul(Rint, mod10n)
 	Rn.Div(Rn, mod2)
 
-	C2int, _ := new(big.Int).SetString(ct.C2, 10)
-	Mint := new(big.Int).Sub(C2int, Rn)
+	// Use C2 integer directly - no string conversion needed
+	Mint := new(big.Int).Sub(ct.c2Int, Rn)
 	if Mint.Sign() < 0 {
 		Mint.Add(Mint, mod10n)
 	}
