@@ -1,10 +1,10 @@
-// Package m1fp implements the public–key encryption scheme
-// proposed by El‑Yahyaoui & Omary (2022).  Security rests on the
-// Modulo‑1 Factoring Problem (M1FP), believed NP‑hard and
+// Package m1fp implements the public-key encryption scheme
+// proposed by El-Yahyaoui & Omary (2022). Security rests on the
+// Modulo-1 Factoring Problem (M1FP), believed NP-hard and
 // resistant to quantum attacks.
 //
-// All arithmetic uses exact integer operations for precision and
-// performance. The caller chooses the working precision when generating keys.
+// All arithmetic uses exact integer operations in a unified common domain
+// to eliminate precision errors in homomorphic operations.
 package m1fp
 
 import (
@@ -14,20 +14,25 @@ import (
 	"strings"
 )
 
+// X is the default irrational number used as the public parameter.
+// This represents ln(5) mod 1 with high precision.
 const X = "0.6094379124341003746007593332261876395256013542685177219126478914741789877076578"
 
-// PrivateKey = {a, pk}.  The secret integer a is never exposed.
+// PrivateKey contains the secret key material for M1FP encryption.
+// The secret integer A is never exposed outside this structure.
 type PrivateKey struct {
-	A  *big.Int
-	PK PublicKey
+	A  *big.Int  // Secret integer used for decryption
+	PK PublicKey // Associated public key
 }
 
-// KeyGen creates a fresh key pair.
+// KeyGen generates a new M1FP key pair using the common domain approach.
+// The common domain D = 2^P · 5^n eliminates precision errors in homomorphic operations.
 //
-//	precBits  – arithmetic precision (≥ 128; 256 is a safe default)
-//	xString   – textual representation of an irrational  0 < x < 1  (e.g. "0.6094379124")
+// Parameters:
+//   - precBits: arithmetic precision in bits (minimum 128, recommended 256)
+//   - xString: textual representation of an irrational number in (0,1)
 //
-// Returns (sk, pk, error).
+// Returns the private key, public key, and any error encountered.
 func KeyGen(precBits uint, xString string) (*PrivateKey, *PublicKey, error) {
 	if precBits < 128 {
 		return nil, nil, fmt.Errorf("precision too small")
@@ -36,12 +41,10 @@ func KeyGen(precBits uint, xString string) (*PrivateKey, *PublicKey, error) {
 	if !ok {
 		return nil, nil, fmt.Errorf("invalid x string")
 	}
-	// 1 > x > 0 ?
 	if x.Sign() <= 0 || x.Cmp(big.NewFloat(1).SetPrec(precBits)) >= 0 {
 		return nil, nil, fmt.Errorf("x must satisfy 0 < x < 1")
 	}
 
-	// Generate a random 128‑bit positive integer a
 	a, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		return nil, nil, err
@@ -49,64 +52,67 @@ func KeyGen(precBits uint, xString string) (*PrivateKey, *PublicKey, error) {
 	if a.Sign() == 0 {
 		a.Add(a, big.NewInt(1))
 	}
-	// h = (a * x) mod 1
+
 	h := mulIntFloatMod1(a, x, precBits)
+	n := uint(VoteDigits)
+	d := computeCommonDenominator(precBits, n)
 
-	// Compute integer representations for exact arithmetic
-	xInt, err := intFromFloat(x, precBits)
+	xInt, err := liftToCommonDomain(x, d, precBits)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to convert x to integer: %v", err)
+		return nil, nil, fmt.Errorf("failed to lift x to common domain: %v", err)
 	}
-	hInt, err := intFromFloat(h, precBits)
+	hInt, err := liftToCommonDomain(h, d, precBits)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to convert h to integer: %v", err)
+		return nil, nil, fmt.Errorf("failed to lift h to common domain: %v", err)
 	}
 
-	pk := &PublicKey{XInt: xInt, HInt: hInt, Prec: precBits}
+	pk := &PublicKey{XInt: xInt, HInt: hInt, D: d, Prec: precBits, N: n}
 	sk := &PrivateKey{A: a, PK: *pk}
 	return sk, pk, nil
 }
 
-// Ciphertext (C1, C2).  Both components stored as integers for exact arithmetic.
+// Ciphertext represents an encrypted message in the common domain D = 2^P · 5^n.
+// Both components are stored as integers for exact arithmetic operations.
 type Ciphertext struct {
-	c1Int *big.Int // C1: r·xInt mod 2^Prec (exact integer)
-	c2Int *big.Int // C2: masked message as integer
-	n     int      // number of decimal digits for C2 modulus (10^n)
+	c1 *big.Int // First component: (r · X) mod D
+	c2 *big.Int // Second component: (M + r · H) mod D
+	d  *big.Int // Common denominator D for arithmetic operations
+	n  uint     // Number of decimal digits for message encoding
 }
 
 // GetC1Int returns the internal integer representation of C1.
 func (ct *Ciphertext) GetC1Int() *big.Int {
-	if ct.c1Int == nil {
+	if ct.c1 == nil {
 		return big.NewInt(0)
 	}
-	return new(big.Int).Set(ct.c1Int)
+	return new(big.Int).Set(ct.c1)
 }
 
 // GetC2Int returns the internal integer representation of C2.
 func (ct *Ciphertext) GetC2Int() *big.Int {
-	if ct.c2Int == nil {
+	if ct.c2 == nil {
 		return big.NewInt(0)
 	}
-	return new(big.Int).Set(ct.c2Int)
+	return new(big.Int).Set(ct.c2)
 }
 
 // C2 returns the C2 component as a zero-padded decimal string for compatibility.
 func (ct *Ciphertext) C2() string {
-	if ct.c2Int == nil {
-		return strings.Repeat("0", ct.n)
+	if ct.c2 == nil {
+		return strings.Repeat("0", int(ct.n))
 	}
-	return fmt.Sprintf("%0*d", ct.n, ct.c2Int)
+	return fmt.Sprintf("%0*d", int(ct.n), ct.c2)
 }
 
 // GetDigitCount returns the number of decimal digits in C2.
 func (ct *Ciphertext) GetDigitCount() int {
-	return ct.n
+	return int(ct.n)
 }
 
-// Encrypt encodes message m (ASCII or UTF‑8 runes within 0‑255) under pk.
-// It returns a probabilistic ciphertext and the random r (useful for tests).
+// Encrypt encodes a message using probabilistic encryption.
+// The message m should contain ASCII or UTF-8 characters with byte values 0-255.
+// Returns the ciphertext, the random value used (for testing), and any error.
 func Encrypt(pk *PublicKey, m string) (*Ciphertext, *big.Int, error) {
-	// choose fresh random integer r
 	r, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
 		return nil, nil, err
@@ -115,82 +121,88 @@ func Encrypt(pk *PublicKey, m string) (*Ciphertext, *big.Int, error) {
 		r.Add(r, big.NewInt(1))
 	}
 
-	// Encrypt deterministically using r
 	c, err := EncryptDeterministic(pk, m, r)
-
 	return c, r, err
 }
 
-// helper: 10^n  as *big.Int*
-func pow10(n int) *big.Int {
-	return new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil)
-}
-
-// EncryptDeterministic encodes message m using *integer‑exact* arithmetic.
+// EncryptDeterministic encrypts a message using a specified random value.
+// Uses the common domain approach to eliminate precision loss in homomorphic operations.
+// The message is encoded as ASCII digits and lifted to the common domain D = 2^P · 5^n.
 func EncryptDeterministic(pk *PublicKey, m string, r *big.Int) (*Ciphertext, error) {
-	prec := pk.Prec
-	n := len(asciiToDigits(m)) // 3·len(m)
+	n := len(asciiToDigits(m))
+	if pk.Prec < uint(n) {
+		return nil, fmt.Errorf("precision %d too small for %d digits", pk.Prec, n)
+	}
 
-	twoPow := new(big.Int).Lsh(big.NewInt(1), prec) // 2^prec
+	messageInt, _ := new(big.Int).SetString(asciiToDigits(m), 10)
+	scaleFactor := new(big.Int).Lsh(big.NewInt(1), pk.Prec-uint(n))
+	M := new(big.Int).Mul(messageInt, scaleFactor)
 
-	// ---- Use precomputed integer representations for exact arithmetic ----
-	// No float conversions needed - use stored integer values directly
+	c1 := new(big.Int).Mul(r, pk.XInt)
+	c1.Mod(c1, pk.D)
 
-	// ---- C1 = r·x  mod 1 -----------------------------------------------
-	c1Int := new(big.Int).Mul(r, pk.XInt)
-	c1Int.Mod(c1Int, twoPow)
+	rH := new(big.Int).Mul(r, pk.HInt)
+	rH.Mod(rH, pk.D)
 
-	// ---- R  = r·h  mod 1 -----------------------------------------------
-	Rint := new(big.Int).Mul(r, pk.HInt)
-	Rint.Mod(Rint, twoPow)
+	c2 := new(big.Int).Add(M, rH)
+	c2.Mod(c2, pk.D)
 
-	// first n decimal digits  Rn = ⌊ R * 10^n ⌋
-	Rn := new(big.Int).Mul(Rint, pow10(n))
-	Rn.Div(Rn, twoPow) // exact floor
-
-	// ---- mask the message ----------------------------------------------
-	Mint, _ := new(big.Int).SetString(asciiToDigits(m), 10)
-	c2Int := new(big.Int).Add(Mint, Rn)
-	c2Int.Mod(c2Int, pow10(n))
-
-	return &Ciphertext{c1Int: c1Int, c2Int: c2Int, n: n}, nil
+	return &Ciphertext{c1: c1, c2: c2, d: new(big.Int).Set(pk.D), n: uint(n)}, nil
 }
 
-// Decrypt recovers the plaintext using the same fixed‑point path.
+// Decrypt recovers the original message from a ciphertext.
+// Uses the common domain approach to maintain precision throughout the decryption process.
+// Applies proper rounding when converting back from the scaled representation.
 func Decrypt(sk *PrivateKey, ct *Ciphertext) (string, error) {
-	prec := sk.PK.Prec
-	n := ct.n
-	twoPow := new(big.Int).Lsh(big.NewInt(1), prec)
-
-	// R' = a·C1  mod 1   (fixed‑point) - use internal integer directly
-	Rint := new(big.Int).Mul(sk.A, ct.c1Int)
-	Rint.Mod(Rint, twoPow)
-
-	Rn := new(big.Int).Mul(Rint, pow10(n))
-	Rn.Div(Rn, twoPow)
-
-	// Use C2 integer directly - no string conversion needed
-	Mint := new(big.Int).Sub(ct.c2Int, Rn)
-	if Mint.Sign() < 0 {
-		Mint.Add(Mint, pow10(n))
+	if ct.d == nil {
+		return "", fmt.Errorf("missing common denominator in ciphertext")
 	}
-	msgDigits := fmt.Sprintf("%0*d", n, Mint)
+
+	n := ct.n
+	if sk.PK.Prec < uint(n) {
+		return "", fmt.Errorf("precision %d too small for %d digits", sk.PK.Prec, n)
+	}
+
+	aC1 := new(big.Int).Mul(sk.A, ct.c1)
+	aC1.Mod(aC1, ct.d)
+
+	MPrime := new(big.Int).Sub(ct.c2, aC1)
+	if MPrime.Sign() < 0 {
+		MPrime.Add(MPrime, ct.d)
+	}
+
+	scaleFactor := new(big.Int).Lsh(big.NewInt(1), sk.PK.Prec-uint(n))
+	messageInt := new(big.Int)
+	remainder := new(big.Int)
+	messageInt.DivMod(MPrime, scaleFactor, remainder)
+
+	if remainder.Sign() != 0 {
+		halfScale := new(big.Int).Div(scaleFactor, big.NewInt(2))
+		if remainder.Cmp(halfScale) >= 0 {
+			messageInt.Add(messageInt, big.NewInt(1))
+		}
+	}
+
+	msgDigits := fmt.Sprintf("%0*d", int(n), messageInt)
 	return digitsToASCII(msgDigits)
 }
 
-// mulIntFloatMod1 returns (a * x) mod 1 with given precision.
+// mulIntFloatMod1 computes (a * x) mod 1 with the specified precision.
+// Used internally for key generation to compute h = (a * x) mod 1.
 func mulIntFloatMod1(a *big.Int, x *big.Float, prec uint) *big.Float {
 	ax := new(big.Float).SetPrec(prec).Mul(new(big.Float).SetPrec(prec).SetInt(a), x)
 	return Mod1(ax, prec)
 }
 
-// mod1 takes the fractional part (positive inputs only).
+// Mod1 returns the fractional part of a floating-point number.
+// Equivalent to f - floor(f) for positive inputs.
 func Mod1(f *big.Float, prec uint) *big.Float {
-	intPart, _ := f.Int(nil) // floor
+	intPart, _ := f.Int(nil)
 	return new(big.Float).SetPrec(prec).Sub(f, new(big.Float).SetInt(intPart))
 }
 
-// asciiToDigits encodes text as concatenated 3‑digit ASCII codes.
+// asciiToDigits encodes text as concatenated 3-digit ASCII codes.
+// Each byte is converted to a 3-digit decimal representation (e.g., 'A' -> "065").
 func asciiToDigits(s string) string {
 	var sb strings.Builder
 	for _, r := range []byte(s) {
@@ -199,7 +211,8 @@ func asciiToDigits(s string) string {
 	return sb.String()
 }
 
-// digitsToASCII decodes a decimal string back to text (3‑digit groups).
+// digitsToASCII decodes a decimal string back to text using 3-digit groups.
+// Each group of 3 digits is converted back to its corresponding ASCII character.
 func digitsToASCII(d string) (string, error) {
 	if len(d)%3 != 0 {
 		return "", fmt.Errorf("digits length must be multiple of 3")

@@ -6,24 +6,26 @@ import (
 	"math/big"
 )
 
-// settings for e‑voting -------------------------------------------------
+// VoteDigits defines the number of decimal digits used for vote encoding.
+// This provides sufficient range for large-scale elections (10^9 > 100M votes).
 const (
-	VoteDigits = 9          // 10^9  >  100M · 64   (plenty of headroom)
-	VoteMod    = 1000000000 // 10^9 as int
+	VoteDigits = 9          // Maximum decimal digits for vote representation
+	VoteMod    = 1000000000 // 10^9 modulus for vote arithmetic
 )
 
-// EncryptVote encrypts a single ballot 0…64 using the compact
-// “numeric‑only” encoding.  If r==nil a fresh randomizer is generated.
+// EncryptVote encrypts a single numeric vote using the common domain approach.
+// The vote value must be in the range [0, 64] for compatibility with the voting system.
+// If r is nil, a fresh random value is generated for probabilistic encryption.
 func EncryptVote(pk *PublicKey, vote uint64, r *big.Int) (*Ciphertext, *big.Int, error) {
 	if vote > 64 {
 		return nil, nil, fmt.Errorf("vote out of range")
 	}
-	msgDigits := fmt.Sprintf("%0*d", VoteDigits, vote) // 9‑digit zero‑pad
+	msgDigits := fmt.Sprintf("%0*d", VoteDigits, vote)
 	return encryptDigits(pk, msgDigits, r)
 }
 
-// DecryptVote returns the numeric value encoded in a ciphertext produced
-// by EncryptVote / Add.
+// DecryptVote recovers the numeric value from a ciphertext produced by EncryptVote.
+// Returns the original vote value as an unsigned integer.
 func DecryptVote(sk *PrivateKey, ct *Ciphertext) (uint64, error) {
 	plain, err := DecryptDigits(sk, ct)
 	if err != nil {
@@ -36,14 +38,9 @@ func DecryptVote(sk *PrivateKey, ct *Ciphertext) (uint64, error) {
 	return i.Uint64(), nil
 }
 
-// ----------------------------------------------------------------------
-//
-//  Low‑level helpers that operate directly on decimal strings
-//
-// ----------------------------------------------------------------------
-
-// encryptDigits is identical to EncryptDeterministic except that the
-// caller passes the decimal string directly (we skip asciiToDigits).
+// encryptDigits encrypts a decimal string using the common domain approach.
+// This internal function handles the core encryption logic for numeric values,
+// ensuring all arithmetic is performed in the unified domain D = 2^P · 5^n.
 func encryptDigits(pk *PublicKey, msgDigits string, r *big.Int) (*Ciphertext, *big.Int, error) {
 	if r == nil {
 		var err error
@@ -56,49 +53,67 @@ func encryptDigits(pk *PublicKey, msgDigits string, r *big.Int) (*Ciphertext, *b
 		}
 	}
 	n := len(msgDigits)
-	prec := pk.Prec
-	mod10n := pow10(n)
 
-	// ---- step 1 : C1 -----------------------------------------------------
-	// Use precomputed integer representation for exact arithmetic
-	c1Int := new(big.Int).Mul(r, pk.XInt)
-	mod2 := new(big.Int).Lsh(big.NewInt(1), prec)
-	c1Int.Mod(c1Int, mod2)
+	if n != VoteDigits {
+		if n > VoteDigits {
+			return nil, nil, fmt.Errorf("message too long: %d digits, max %d", n, VoteDigits)
+		}
+		msgDigits = fmt.Sprintf("%0*s", VoteDigits, msgDigits)
+		n = VoteDigits
+	}
 
-	// ---- step 2 : shared secret  r·h mod 1 ------------------------------
-	// Use precomputed integer representation for exact arithmetic
-	Rint := new(big.Int).Mul(r, pk.HInt)
-	Rint.Mod(Rint, mod2)
-	Rn := new(big.Int).Mul(Rint, mod10n)
-	Rn.Div(Rn, mod2)
+	if pk.Prec < uint(n) {
+		return nil, nil, fmt.Errorf("precision %d too small for %d digits", pk.Prec, n)
+	}
 
-	// ---- step 3 : masking ----------------------------------------------
-	Mint, _ := new(big.Int).SetString(msgDigits, 10)
-	C2 := new(big.Int).Add(Mint, Rn)
-	C2.Mod(C2, mod10n)
+	messageInt, _ := new(big.Int).SetString(msgDigits, 10)
+	scaleFactor := new(big.Int).Lsh(big.NewInt(1), pk.Prec-uint(n))
+	M := new(big.Int).Mul(messageInt, scaleFactor)
 
-	return &Ciphertext{c1Int: c1Int, c2Int: C2, n: n}, r, nil
+	c1 := new(big.Int).Mul(r, pk.XInt)
+	c1.Mod(c1, pk.D)
+
+	rH := new(big.Int).Mul(r, pk.HInt)
+	rH.Mod(rH, pk.D)
+
+	c2 := new(big.Int).Add(M, rH)
+	c2.Mod(c2, pk.D)
+
+	return &Ciphertext{c1: c1, c2: c2, d: new(big.Int).Set(pk.D), n: uint(n)}, r, nil
 }
 
-// DecryptDigits returns the raw decimal string embedded in the
-// ciphertext.  It is the inverse of encryptDigits.
+// DecryptDigits recovers the raw decimal string from a ciphertext.
+// This internal function performs the inverse of encryptDigits, maintaining
+// precision through the common domain approach and proper rounding.
 func DecryptDigits(sk *PrivateKey, ct *Ciphertext) (string, error) {
-	n := ct.n
-	prec := sk.PK.Prec
-	mod10n := pow10(n)
-
-	// R' = a·C1  mod 1 - use internal integer directly
-	mod2 := new(big.Int).Lsh(big.NewInt(1), prec)
-	Rint := new(big.Int).Mul(sk.A, ct.c1Int)
-	Rint.Mod(Rint, mod2)
-
-	Rn := new(big.Int).Mul(Rint, mod10n)
-	Rn.Div(Rn, mod2)
-
-	// Use C2 integer directly - no string conversion needed
-	Mint := new(big.Int).Sub(ct.c2Int, Rn)
-	if Mint.Sign() < 0 {
-		Mint.Add(Mint, mod10n)
+	if ct.d == nil {
+		return "", fmt.Errorf("missing common denominator in ciphertext")
 	}
-	return fmt.Sprintf("%0*d", n, Mint), nil
+
+	n := ct.n
+	if sk.PK.Prec < uint(n) {
+		return "", fmt.Errorf("precision %d too small for %d digits", sk.PK.Prec, n)
+	}
+
+	aC1 := new(big.Int).Mul(sk.A, ct.c1)
+	aC1.Mod(aC1, ct.d)
+
+	MPrime := new(big.Int).Sub(ct.c2, aC1)
+	if MPrime.Sign() < 0 {
+		MPrime.Add(MPrime, ct.d)
+	}
+
+	scaleFactor := new(big.Int).Lsh(big.NewInt(1), sk.PK.Prec-uint(n))
+	messageInt := new(big.Int)
+	remainder := new(big.Int)
+	messageInt.DivMod(MPrime, scaleFactor, remainder)
+
+	if remainder.Sign() != 0 {
+		halfScale := new(big.Int).Div(scaleFactor, big.NewInt(2))
+		if remainder.Cmp(halfScale) >= 0 {
+			messageInt.Add(messageInt, big.NewInt(1))
+		}
+	}
+
+	return fmt.Sprintf("%0*d", int(n), messageInt), nil
 }

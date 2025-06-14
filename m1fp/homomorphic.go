@@ -5,52 +5,38 @@ import (
 	"math/big"
 )
 
-// Add homomorphically adds two ciphertexts.
-// It now propagates the carry that may arise from the fractional‑part
-// addition into the decimal‑masked component.
-// This version uses exact integer arithmetic to avoid float precision issues.
+// Add performs homomorphic addition of two ciphertexts in the common domain.
+// The operation is simplified to pure modular arithmetic without carry logic,
+// thanks to the unified domain D = 2^P · 5^n approach.
+//
+// Both ciphertexts must use the same common denominator D for compatibility.
+// The precision parameter is maintained for API compatibility but is not used
+// in the common domain implementation.
 func (c *Ciphertext) Add(other *Ciphertext, prec uint) (*Ciphertext, error) {
-	if c == nil || other == nil || c.c1Int == nil || other.c1Int == nil {
+	if c == nil || other == nil || c.c1 == nil || other.c1 == nil {
 		return nil, fmt.Errorf("nil ciphertext")
 	}
-	if prec == 0 {
-		return nil, fmt.Errorf("invalid precision")
+	if c.d == nil || other.d == nil {
+		return nil, fmt.Errorf("missing common denominator")
+	}
+	if c.d.Cmp(other.d) != 0 {
+		return nil, fmt.Errorf("mismatched common denominators")
 	}
 
-	//------------------------------------------------------------------//
-	// 1)  Exact fixed‑point addition of C1  (mod 2^prec) - pure integer
-	//------------------------------------------------------------------//
-	mod2 := new(big.Int).Lsh(big.NewInt(1), prec)    // 2^prec
-	sumInt := new(big.Int).Add(c.c1Int, other.c1Int) // exact integer addition
-	carry := sumInt.Cmp(mod2) >= 0                   // did we wrap?
-	if carry {
-		sumInt.Sub(sumInt, mod2)
-	}
+	sumC1 := new(big.Int).Add(c.c1, other.c1)
+	sumC1.Mod(sumC1, c.d)
 
-	//------------------------------------------------------------------//
-	// 2)  Integer addition of C2, with the fractional carry
-	//------------------------------------------------------------------//
-	if c.n%3 != 0 || other.n%3 != 0 {
-		return nil, fmt.Errorf("malformed C2 digit counts (n %% 3 ≠ 0)")
-	}
+	sumC2 := new(big.Int).Add(c.c2, other.c2)
+	sumC2.Mod(sumC2, c.d)
+
 	n := max(other.n, c.n)
-	if r := n % 3; r != 0 {
-		n += 3 - r
-	}
 
-	// Direct integer addition - no string conversions needed
-	sumC2 := new(big.Int).Add(c.c2Int, other.c2Int)
-	if carry {
-		sumC2.Add(sumC2, big.NewInt(1))
-	}
-
-	mod10n := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil)
-	sumC2.Mod(sumC2, mod10n)
-
-	return &Ciphertext{c1Int: sumInt, c2Int: sumC2, n: n}, nil
+	return &Ciphertext{c1: sumC1, c2: sumC2, d: new(big.Int).Set(c.d), n: n}, nil
 }
 
-// AddMany unchanged.
+// AddMany performs homomorphic addition of multiple ciphertexts.
+// Efficiently combines multiple encrypted values into a single ciphertext
+// representing their sum, maintaining perfect precision throughout.
 func AddMany(prec uint, cts ...*Ciphertext) (*Ciphertext, error) {
 	if len(cts) == 0 {
 		return nil, fmt.Errorf("no ciphertexts")
