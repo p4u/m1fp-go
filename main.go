@@ -8,9 +8,8 @@ import (
 )
 
 func main() {
-	// --- Key generation ---------------------------------------------------
-	xStr := "0.60943791243410037460075933322619" // ln(5) mod 1
-	sk, pk, err := m1fp.KeyGen(256, xStr)
+	// --- Key generation with high-precision ln(5) ------------------------
+	sk, pk, err := m1fp.KeyGen(256, m1fp.X)
 	if err != nil {
 		fmt.Printf("KeyGen error: %v\n", err)
 		return

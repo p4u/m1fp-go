@@ -14,6 +14,8 @@ import (
 	"strings"
 )
 
+const X = "0.6094379124341003746007593332261876395256013542685177219126478914741789877076578"
+
 // PrivateKey = {a, pk}.  The secret integer a is never exposed.
 type PrivateKey struct {
 	A  *big.Int

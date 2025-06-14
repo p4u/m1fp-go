@@ -21,11 +21,10 @@ func INT(s string) *big.Int {
 
 func TestHomomorphicAdditionDebug(t *testing.T) {
 	prec := uint(256)
-	xStr := "0.60943791243410037460075933322619"
 	aStr := "5940941723"
 
 	// --- key material -----------------------------------------------------
-	x, _ := new(big.Float).SetPrec(prec).SetString(xStr)
+	x, _ := new(big.Float).SetPrec(prec).SetString(X)
 	a, _ := new(big.Int).SetString(aStr, 10)
 	h := Mod1(new(big.Float).SetPrec(prec).Mul(new(big.Float).SetInt(a), x), prec)
 
@@ -136,11 +135,10 @@ func TestHomomorphicAdditionDebug(t *testing.T) {
 func TestHomomorphicMultipleAdditions(t *testing.T) {
 	// Use the same key material as the working debug test
 	prec := uint(256)
-	xStr := "0.60943791243410037460075933322619"
 	aStr := "5940941723"
 
 	// --- key material (same as debug test) -------------------------------
-	x, _ := new(big.Float).SetPrec(prec).SetString(xStr)
+	x, _ := new(big.Float).SetPrec(prec).SetString(X)
 	a, _ := new(big.Int).SetString(aStr, 10)
 	h := Mod1(new(big.Float).SetPrec(prec).Mul(new(big.Float).SetInt(a), x), prec)
 
@@ -226,8 +224,7 @@ func TestHomomorphicVoting(t *testing.T) {
 	)
 
 	// -------- key pair ----------------------------------------------------
-	xStr := "0.60943791243410037460075933322619"
-	sk, pk, err := KeyGen(256, xStr)
+	sk, pk, err := KeyGen(256, X)
 	if err != nil {
 		t.Fatalf("KeyGen: %v", err)
 	}
@@ -273,8 +270,7 @@ func TestHomomorphicVoting100k(t *testing.T) {
 	)
 
 	// -------- key pair ----------------------------------------------------
-	xStr := "0.60943791243410037460075933322619"
-	sk, pk, err := KeyGen(256, xStr)
+	sk, pk, err := KeyGen(256, X)
 	if err != nil {
 		t.Fatalf("KeyGen: %v", err)
 	}
