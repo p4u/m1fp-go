@@ -12,7 +12,7 @@ import (
 // Both ciphertexts must use the same common denominator D for compatibility.
 // The precision parameter is maintained for API compatibility but is not used
 // in the common domain implementation.
-func (c *Ciphertext) Add(other *Ciphertext, prec uint) (*Ciphertext, error) {
+func (c *Ciphertext) Add(other *Ciphertext, prec uint16) (*Ciphertext, error) {
 	if c == nil || other == nil || c.c1 == nil || other.c1 == nil {
 		return nil, fmt.Errorf("nil ciphertext")
 	}
@@ -37,7 +37,7 @@ func (c *Ciphertext) Add(other *Ciphertext, prec uint) (*Ciphertext, error) {
 // AddMany performs homomorphic addition of multiple ciphertexts.
 // Efficiently combines multiple encrypted values into a single ciphertext
 // representing their sum, maintaining perfect precision throughout.
-func AddMany(prec uint, cts ...*Ciphertext) (*Ciphertext, error) {
+func AddMany(prec uint16, cts ...*Ciphertext) (*Ciphertext, error) {
 	if len(cts) == 0 {
 		return nil, fmt.Errorf("no ciphertexts")
 	}

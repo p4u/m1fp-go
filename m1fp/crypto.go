@@ -33,15 +33,15 @@ type PrivateKey struct {
 //   - xString: textual representation of an irrational number in (0,1)
 //
 // Returns the private key, public key, and any error encountered.
-func KeyGen(precBits uint, xString string) (*PrivateKey, *PublicKey, error) {
+func KeyGen(precBits uint16, xString string) (*PrivateKey, *PublicKey, error) {
 	if precBits < 128 {
 		return nil, nil, fmt.Errorf("precision too small")
 	}
-	x, ok := new(big.Float).SetPrec(precBits).SetString(xString)
+	x, ok := new(big.Float).SetPrec(uint(precBits)).SetString(xString)
 	if !ok {
 		return nil, nil, fmt.Errorf("invalid x string")
 	}
-	if x.Sign() <= 0 || x.Cmp(big.NewFloat(1).SetPrec(precBits)) >= 0 {
+	if x.Sign() <= 0 || x.Cmp(big.NewFloat(1).SetPrec(uint(precBits))) >= 0 {
 		return nil, nil, fmt.Errorf("x must satisfy 0 < x < 1")
 	}
 
@@ -54,7 +54,7 @@ func KeyGen(precBits uint, xString string) (*PrivateKey, *PublicKey, error) {
 	}
 
 	h := mulIntFloatMod1(a, x, precBits)
-	n := uint(VoteDigits)
+	n := uint16(VoteDigits)
 	d := computeCommonDenominator(precBits, n)
 
 	xInt, err := liftToCommonDomain(x, d, precBits)
@@ -130,12 +130,12 @@ func Encrypt(pk *PublicKey, m string) (*Ciphertext, *big.Int, error) {
 // The message is encoded as ASCII digits and lifted to the common domain D = 2^P · 5^n.
 func EncryptDeterministic(pk *PublicKey, m string, r *big.Int) (*Ciphertext, error) {
 	n := len(asciiToDigits(m))
-	if pk.Prec < uint(n) {
+	if pk.Prec < uint16(n) {
 		return nil, fmt.Errorf("precision %d too small for %d digits", pk.Prec, n)
 	}
 
 	messageInt, _ := new(big.Int).SetString(asciiToDigits(m), 10)
-	scaleFactor := new(big.Int).Lsh(big.NewInt(1), pk.Prec-uint(n))
+	scaleFactor := new(big.Int).Lsh(big.NewInt(1), uint(pk.Prec)-uint(n))
 	M := new(big.Int).Mul(messageInt, scaleFactor)
 
 	c1 := new(big.Int).Mul(r, pk.XInt)
@@ -159,7 +159,7 @@ func Decrypt(sk *PrivateKey, ct *Ciphertext) (string, error) {
 	}
 
 	n := ct.n
-	if sk.PK.Prec < uint(n) {
+	if sk.PK.Prec < uint16(n) {
 		return "", fmt.Errorf("precision %d too small for %d digits", sk.PK.Prec, n)
 	}
 
@@ -171,7 +171,7 @@ func Decrypt(sk *PrivateKey, ct *Ciphertext) (string, error) {
 		MPrime.Add(MPrime, ct.d)
 	}
 
-	scaleFactor := new(big.Int).Lsh(big.NewInt(1), sk.PK.Prec-uint(n))
+	scaleFactor := new(big.Int).Lsh(big.NewInt(1), uint(sk.PK.Prec)-n)
 	messageInt := new(big.Int)
 	remainder := new(big.Int)
 	messageInt.DivMod(MPrime, scaleFactor, remainder)
@@ -189,16 +189,16 @@ func Decrypt(sk *PrivateKey, ct *Ciphertext) (string, error) {
 
 // mulIntFloatMod1 computes (a * x) mod 1 with the specified precision.
 // Used internally for key generation to compute h = (a * x) mod 1.
-func mulIntFloatMod1(a *big.Int, x *big.Float, prec uint) *big.Float {
-	ax := new(big.Float).SetPrec(prec).Mul(new(big.Float).SetPrec(prec).SetInt(a), x)
+func mulIntFloatMod1(a *big.Int, x *big.Float, prec uint16) *big.Float {
+	ax := new(big.Float).SetPrec(uint(prec)).Mul(new(big.Float).SetPrec(uint(prec)).SetInt(a), x)
 	return Mod1(ax, prec)
 }
 
 // Mod1 returns the fractional part of a floating-point number.
 // Equivalent to f - floor(f) for positive inputs.
-func Mod1(f *big.Float, prec uint) *big.Float {
+func Mod1(f *big.Float, prec uint16) *big.Float {
 	intPart, _ := f.Int(nil)
-	return new(big.Float).SetPrec(prec).Sub(f, new(big.Float).SetInt(intPart))
+	return new(big.Float).SetPrec(uint(prec)).Sub(f, new(big.Float).SetInt(intPart))
 }
 
 // asciiToDigits encodes text as concatenated 3-digit ASCII codes.

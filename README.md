@@ -1,8 +1,14 @@
 # m1fp‑go
 
 A like‑ElGamal public‑key cryptosystem based on the _Modulo‑1 Factoring  
-Problem (M1FP)_ with exact additive homomorphism, written in Go (≥ 1.22)
+Problem (M1FP)_ with exact additive homomorphism, written in Go.
 
+The implementation is designed to be used on e-voting systems, so the API contains
+explicit e-voting references. However it can be used for any other purpose.
+
+**The code under this repository is not audited and must not be used for other than research purposes.**
+
+**Note that the code is licensed under AGPLv3, so any work derived from it must also be published under a GPL compatible license**
 
 ## 1  Citation
 
@@ -14,6 +20,9 @@ This implementation follows and extends the scheme from:
 
 Please cite the paper if you use this code in academic work.
 
+This proof-of-concept implementation has been done for the [Vocdoni project](https://vocdoni.io) (for post-quantum encryption research).  
+So please, cite the project also if you use this work.
+
 ---
 
 ## 2  Why is this interesting?
@@ -24,7 +33,7 @@ Please cite the paper if you use this code in academic work.
 * **Exact additive homomorphism** – You can add ciphertexts and, after one decryption, obtain the sum of the underlying plaintexts.  
   This is invaluable for **e‑voting**, private surveys, and any "tally without opening individual ballots" workflow.
 
-* **Perfect precision** – Our implementation uses a novel **common domain approach** that eliminates precision errors completely, achieving exact arithmetic even for millions of homomorphic additions.
+* **Perfect precision** – This implementation uses a novel **common domain approach** that eliminates precision errors completely, achieving exact arithmetic even for millions of homomorphic additions.
 
 ---
 
@@ -54,13 +63,11 @@ Please cite the paper if you use this code in academic work.
 
 ---
 
-## 5  Precision Solution: Common Domain Approach 🎯
-
-### The Problem We Solved
+## 5  Precision Solution: Common Domain Approach
 
 Previous implementations suffered from **precision drift** when converting between binary (`mod 2^P`) and decimal (`mod 10^n`) domains. Floor operations like `⌊R × 10^n / 2^P⌋` introduced tiny errors that accumulated over thousands of homomorphic additions, causing vote counting errors of 5-10 votes in 100k tallies.
 
-### Solution: Unified Arithmetic Domain
+### Unified Arithmetic Domain
 
 We implement all encryption arithmetic in a **single high-precision domain** `D = 2^P · 5^n`:
 
@@ -101,15 +108,11 @@ We implement all encryption arithmetic in a **single high-precision domain** `D 
 
 ## 6  How additive homomorphism works 🔢
 
-### Core Principle
-
 The homomorphic property works because addition in the common domain preserves the linear structure:
 
 ```
 Enc(m₁) + Enc(m₂) = Enc(m₁ + m₂)
 ```
-
-### Detailed Homomorphic Addition
 
 Given two ciphertexts **E(M₁) = (C₁, C₂)** and **E(M₂) = (C₁′, C₂′)**:
 
@@ -119,8 +122,6 @@ Given two ciphertexts **E(M₁) = (C₁, C₂)** and **E(M₂) = (C₁′, C₂�
    C₂_sum = (C₂ + C₂′) mod D
    ```
    
-   No carry bits or complex logic needed – just pure modular addition!
-
 2. **Why This Works**  
    ```
    C₂_sum = (M₁·2^(P-n) + r₁·H + M₂·2^(P-n) + r₂·H) mod D
@@ -205,43 +206,10 @@ Final result: 59 × 2^247 / 2^247 = 59  ✓
 * No extra information is leaked; adversaries cannot learn individual
   ballots, only the final tally once the holder of `a` decrypts.
 
----
-
-## 10  zkSNARK feasibility (Circom / gnark)
-
-* **Fixed‑point non‑native field arithmetic** – `r·X` and `r·H` are
-  multiplications of ~256‑bit integers; gnark's `emulated` API costs
-  ~2 k constraints each.
-* **Decimal range checks** – prove `0 ≤ M < 10ⁿ` (30 constraints for
-  `n ≤ 9`).
-* **Common domain arithmetic** – Simpler than dual-domain approach,
-  fewer constraints needed for homomorphic operations.
-* A circuit that **proves correct encryption and homomorphic tally** for
-  10 M ballots can be aggregated with Groth16
-  into < 10 k constraints per chunk, totally practical.
 
 ---
 
-## 11  Performance & Testing
-
-### Precision Validation
-
-Our test suite validates perfect precision:
-
-* **100,000 votes** with random values 0-64: **0 error** (previously 5-10 vote errors)
-* **1,000,000+ additions** maintain perfect accuracy
-* **Deterministic tests** ensure reproducible results
-
-### Benchmarks
-
-* **Encryption**: ~1ms per vote (256-bit precision)
-* **Homomorphic addition**: ~0.1ms per operation  
-* **Decryption**: ~1ms for final tally
-* **Memory**: Constant overhead, no precision drift
-
----
-
-## 12  Getting started
+## 10  Getting started
 
 ```go
 go get github.com/p4u/m1fp-go/m1fp
@@ -303,5 +271,3 @@ pk2.UnmarshalBinary(blob)
 r := big.NewInt(1234567)
 ct, _ := m1fp.EncryptDeterministic(pk, "Hello", r)
 ```
-
----

@@ -7,7 +7,6 @@ import (
 	mrand "math/rand"
 
 	"testing"
-	"time"
 )
 
 // INT returns a *big.Int* from a decimal string (panic on error – debug use).
@@ -20,7 +19,6 @@ func INT(s string) *big.Int {
 }
 
 func TestHomomorphicAdditionDebug(t *testing.T) {
-	// Use the new KeyGen function to create proper keys with common domain
 	sk, pk, err := KeyGen(256, X)
 	if err != nil {
 		t.Fatalf("KeyGen failed: %v", err)
@@ -41,9 +39,7 @@ func TestHomomorphicAdditionDebug(t *testing.T) {
 		t.Fatalf("EncryptDeterministic failed: %v", err)
 	}
 
-	//----------------------------------------------------------------------
-	//  Ciphertext addition (our library)
-	//----------------------------------------------------------------------
+	//  Ciphertext addition
 	ctSum, err := ct1.Add(ct2, pk.Prec)
 	if err != nil {
 		t.Fatalf("Add failed: %v", err)
@@ -53,9 +49,7 @@ func TestHomomorphicAdditionDebug(t *testing.T) {
 		t.Fatalf("Decrypt failed: %v", err)
 	}
 
-	//----------------------------------------------------------------------
 	//  PRINT EVERYTHING
-	//----------------------------------------------------------------------
 	fmt.Println("\n======== COMMON DOMAIN TEST ==========")
 	fmt.Printf("Common denominator D      : %s\n", pk.D)
 	fmt.Printf("Precision P               : %d\n", pk.Prec)
@@ -84,13 +78,11 @@ func TestHomomorphicAdditionDebug(t *testing.T) {
 }
 
 func TestHomomorphicMultipleAdditions(t *testing.T) {
-	// Use the new KeyGen function to create proper keys with common domain
 	sk, pk, err := KeyGen(256, X)
 	if err != nil {
 		t.Fatalf("KeyGen failed: %v", err)
 	}
 
-	// Generate random numbers between 0 and 64
 	numValues := 5
 	values := make([]int, numValues)
 	ciphertexts := make([]*Ciphertext, numValues)
@@ -99,8 +91,7 @@ func TestHomomorphicMultipleAdditions(t *testing.T) {
 	t.Logf("Testing homomorphic addition of %d random values between 0 and 64", numValues)
 
 	// Generate random values and encrypt them
-	for i := 0; i < numValues; i++ {
-		// Generate random number between 0 and 64
+	for i := range numValues {
 		randBig, err := rand.Int(rand.Reader, big.NewInt(65)) // 0 to 64 inclusive
 		if err != nil {
 			t.Fatalf("Failed to generate random number: %v", err)
@@ -108,11 +99,11 @@ func TestHomomorphicMultipleAdditions(t *testing.T) {
 		values[i] = int(randBig.Int64())
 		expectedSum += values[i]
 
-		// Convert to byte representation for encryption (same as debug test)
+		// Convert to byte representation for encryption
 		msg := string([]byte{byte(values[i])})
 
 		// Use deterministic encryption with a unique random value for each
-		r := big.NewInt(int64(1000000 + i*100000)) // Deterministic but unique per value
+		r := big.NewInt(int64(1000000 + i*100000))
 		ct, err := EncryptDeterministic(pk, msg, r)
 		if err != nil {
 			t.Fatalf("Encryption failed for value %d: %v", values[i], err)
@@ -153,55 +144,9 @@ func TestHomomorphicMultipleAdditions(t *testing.T) {
 		t.Fatalf("Homomorphic addition failed: expected %d (mod 256), got %d", expectedSumMod, actualSum)
 	}
 
-	t.Logf("✓ Homomorphic addition of %d random values successful!", numValues)
-	t.Logf("  Values: %v", values)
-	t.Logf("  Raw sum: %d, Modulo 256: %d, Decrypted: %d", expectedSum, expectedSumMod, actualSum)
-}
-
-func TestHomomorphicVoting(t *testing.T) {
-	const (
-		nVotes    = 1000
-		maxChoice = 64
-	)
-
-	// -------- key pair ----------------------------------------------------
-	sk, pk, err := KeyGen(256, X)
-	if err != nil {
-		t.Fatalf("KeyGen: %v", err)
-	}
-
-	// -------- simulate ballots -------------------------------------------
-	rng := mrand.New(mrand.NewSource(time.Now().UnixNano()))
-	var expected uint64
-	var tally *Ciphertext
-
-	for i := 0; i < nVotes; i++ {
-		vote := uint64(rng.Intn(maxChoice + 1))
-		expected += vote
-
-		ct, _, err := EncryptVote(pk, vote, big.NewInt(int64(i+1))) // cheap deterministic r
-		if err != nil {
-			t.Fatalf("EncryptVote: %v", err)
-		}
-		if tally == nil {
-			tally = ct
-		} else {
-			tally, err = tally.Add(ct, pk.Prec)
-			if err != nil {
-				t.Fatalf("Add: %v", err)
-			}
-		}
-	}
-
-	// -------- decrypt aggregate ------------------------------------------
-	got, err := DecryptVote(sk, tally)
-	if err != nil {
-		t.Fatalf("DecryptVote: %v", err)
-	}
-
-	if got != expected {
-		t.Fatalf("tally mismatch: got %d, want %d", got, expected)
-	}
+	t.Logf("Homomorphic addition of %d random values successful!", numValues)
+	t.Logf("Values: %v", values)
+	t.Logf("Raw sum: %d, Modulo 256: %d, Decrypted: %d", expectedSum, expectedSumMod, actualSum)
 }
 
 func TestHomomorphicVoting100k(t *testing.T) {
@@ -210,24 +155,22 @@ func TestHomomorphicVoting100k(t *testing.T) {
 		maxChoice = 64
 	)
 
-	// -------- key pair ----------------------------------------------------
 	sk, pk, err := KeyGen(256, X)
 	if err != nil {
 		t.Fatalf("KeyGen: %v", err)
 	}
 
-	// -------- simulate ballots with fixed seed for reproducibility -------
-	rng := mrand.New(mrand.NewSource(12345)) // Fixed seed to reproduce the issue
+	rng := mrand.New(mrand.NewSource(12345))
 	var expected uint64
 	var tally *Ciphertext
 
 	t.Logf("Testing %d votes with fixed seed for reproducibility", nVotes)
 
-	for i := 0; i < nVotes; i++ {
+	for i := range nVotes {
 		vote := uint64(rng.Intn(maxChoice + 1))
 		expected += vote
 
-		ct, _, err := EncryptVote(pk, vote, big.NewInt(int64(i+1))) // cheap deterministic r
+		ct, _, err := EncryptVote(pk, vote, big.NewInt(int64(i+1)))
 		if err != nil {
 			t.Fatalf("EncryptVote: %v", err)
 		}
@@ -246,7 +189,7 @@ func TestHomomorphicVoting100k(t *testing.T) {
 		}
 	}
 
-	// -------- decrypt aggregate ------------------------------------------
+	// Decrypt the final tally
 	got, err := DecryptVote(sk, tally)
 	if err != nil {
 		t.Fatalf("DecryptVote: %v", err)

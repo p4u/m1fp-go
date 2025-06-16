@@ -27,7 +27,7 @@ func EncryptVote(pk *PublicKey, vote uint64, r *big.Int) (*Ciphertext, *big.Int,
 // DecryptVote recovers the numeric value from a ciphertext produced by EncryptVote.
 // Returns the original vote value as an unsigned integer.
 func DecryptVote(sk *PrivateKey, ct *Ciphertext) (uint64, error) {
-	plain, err := DecryptDigits(sk, ct)
+	plain, err := decryptDigits(sk, ct)
 	if err != nil {
 		return 0, err
 	}
@@ -62,12 +62,12 @@ func encryptDigits(pk *PublicKey, msgDigits string, r *big.Int) (*Ciphertext, *b
 		n = VoteDigits
 	}
 
-	if pk.Prec < uint(n) {
+	if pk.Prec < uint16(n) {
 		return nil, nil, fmt.Errorf("precision %d too small for %d digits", pk.Prec, n)
 	}
 
 	messageInt, _ := new(big.Int).SetString(msgDigits, 10)
-	scaleFactor := new(big.Int).Lsh(big.NewInt(1), pk.Prec-uint(n))
+	scaleFactor := new(big.Int).Lsh(big.NewInt(1), uint(pk.Prec)-uint(n))
 	M := new(big.Int).Mul(messageInt, scaleFactor)
 
 	c1 := new(big.Int).Mul(r, pk.XInt)
@@ -82,16 +82,16 @@ func encryptDigits(pk *PublicKey, msgDigits string, r *big.Int) (*Ciphertext, *b
 	return &Ciphertext{c1: c1, c2: c2, d: new(big.Int).Set(pk.D), n: uint(n)}, r, nil
 }
 
-// DecryptDigits recovers the raw decimal string from a ciphertext.
+// decryptDigits recovers the raw decimal string from a ciphertext.
 // This internal function performs the inverse of encryptDigits, maintaining
 // precision through the common domain approach and proper rounding.
-func DecryptDigits(sk *PrivateKey, ct *Ciphertext) (string, error) {
+func decryptDigits(sk *PrivateKey, ct *Ciphertext) (string, error) {
 	if ct.d == nil {
 		return "", fmt.Errorf("missing common denominator in ciphertext")
 	}
 
 	n := ct.n
-	if sk.PK.Prec < uint(n) {
+	if sk.PK.Prec < uint16(n) {
 		return "", fmt.Errorf("precision %d too small for %d digits", sk.PK.Prec, n)
 	}
 
@@ -103,7 +103,7 @@ func DecryptDigits(sk *PrivateKey, ct *Ciphertext) (string, error) {
 		MPrime.Add(MPrime, ct.d)
 	}
 
-	scaleFactor := new(big.Int).Lsh(big.NewInt(1), sk.PK.Prec-uint(n))
+	scaleFactor := new(big.Int).Lsh(big.NewInt(1), uint(sk.PK.Prec)-uint(n))
 	messageInt := new(big.Int)
 	remainder := new(big.Int)
 	messageInt.DivMod(MPrime, scaleFactor, remainder)
